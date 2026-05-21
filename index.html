@@ -978,7 +978,6 @@
     <div id="iframe-wrapper">
       <iframe
         id="preview-frame"
-        sandbox="allow-scripts allow-same-origin"
         title="Live Page Preview"
       ></iframe>
     </div>
@@ -999,10 +998,10 @@
  */
 
 // ============================================================
-// FIREBASE INITIALIZATION
+// FIREBASE INITIALIZATION — using a verified CDN version
 // ============================================================
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey:            "AIzaSyDeg51XonQUKuq72ojOdEAelF_Qljxdw5k",
@@ -1033,13 +1032,12 @@ const statusLabel  = document.getElementById("status-label");
 // ============================================================
 // STATE
 // ============================================================
-/** @type {Element|null} Currently selected element inside the iframe */
-let selectedEl = null;
+let selectedEl = null;   // currently selected element inside iframe
+let iframeDoc  = null;   // shorthand for frame.contentDocument
 
-/** @type {Document|null} Shorthand for iframe's contentDocument */
-let iframeDoc = null;
-
-/** Fallback HTML shown when the DB has no content yet */
+// ============================================================
+// FALLBACK TEMPLATE
+// ============================================================
 const FALLBACK_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1126,39 +1124,28 @@ const FALLBACK_HTML = `<!DOCTYPE html>
 // ============================================================
 // STATUS HELPERS
 // ============================================================
-/**
- * Update the bottom status bar.
- * @param {'idle'|'connected'|'saving'|'error'} type
- * @param {string} message
- */
 function setStatus(type, message) {
   statusDot.className = "status-dot";
-  const classMap = { connected: "connected", saving: "saving", error: "error" };
-  if (classMap[type]) statusDot.classList.add(classMap[type]);
+  if (type === "connected") statusDot.classList.add("connected");
+  if (type === "saving")    statusDot.classList.add("saving");
+  if (type === "error")     statusDot.classList.add("error");
   statusLabel.textContent = message;
 }
 
 // ============================================================
-// TOAST NOTIFICATION SYSTEM
+// TOAST SYSTEM
 // ============================================================
-/**
- * Show a toast notification.
- * @param {'success'|'error'|'info'} type
- * @param {string} message
- * @param {number} [duration=3000]
- */
 function showToast(type, message, duration = 3000) {
   const icons = {
-    success: `<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
-    error:   `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
-    info:    `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
+    success: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+    error:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+    info:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
   };
   const container = document.getElementById("toast-container");
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
   toast.innerHTML = `${icons[type]}<span>${message}</span>`;
   container.appendChild(toast);
-
   setTimeout(() => {
     toast.classList.add("removing");
     toast.addEventListener("animationend", () => toast.remove(), { once: true });
@@ -1166,35 +1153,33 @@ function showToast(type, message, duration = 3000) {
 }
 
 // ============================================================
-// IFRAME — LOAD CONTENT
+// WRITE HTML INTO IFRAME  — uses srcdoc (no sandbox restriction)
 // ============================================================
-/**
- * Write raw HTML string into the preview iframe and attach click listeners.
- * @param {string} html
- */
 function writeToIframe(html) {
-  iframeDoc = frame.contentWindow.document;
-  iframeDoc.open();
-  iframeDoc.write(html);
-  iframeDoc.close();
+  // srcdoc works reliably across all browsers without needing
+  // allow-same-origin; once loaded we grab the document reference.
+  frame.srcdoc = html;
 
-  // After write, attach click delegation
-  attachIframeListeners();
+  frame.onload = () => {
+    iframeDoc = frame.contentDocument || frame.contentWindow.document;
+    attachIframeListeners();
 
-  // Hide loading overlay
-  iframeLoader.classList.add("hidden");
-  setStatus("connected", "Loaded from database");
+    // Hide loading overlay
+    iframeLoader.classList.add("hidden");
+    setStatus("connected", "Page loaded");
+  };
+
+  // Safety net — hide loader after 5s no matter what
+  setTimeout(() => {
+    iframeLoader.classList.add("hidden");
+  }, 5000);
 }
 
 // ============================================================
-// IFRAME — CLICK DELEGATION
+// IFRAME CLICK DELEGATION
 // ============================================================
-/**
- * Attach a delegated click listener on the iframe body.
- * Handles: element selection, outline rendering, sidebar update.
- */
 function attachIframeListeners() {
-  if (!iframeDoc) return;
+  if (!iframeDoc || !iframeDoc.body) return;
 
   iframeDoc.body.addEventListener("click", (e) => {
     e.preventDefault();
@@ -1202,48 +1187,33 @@ function attachIframeListeners() {
 
     const target = e.target;
 
-    // Deselect if clicking on the same element
+    // Clicking the same element deselects
     if (target === selectedEl) {
       deselectElement();
       return;
     }
 
-    // Remove previous selection outline
     clearOutline();
-
-    // Set new selection
     selectedEl = target;
     applyOutline(selectedEl);
-
-    // Update the sidebar to match element type
     renderSidebarForElement(selectedEl);
-  });
-
-  // Click on the document background deselects
-  iframeDoc.addEventListener("click", (e) => {
-    if (e.target === iframeDoc.body || e.target === iframeDoc.documentElement) {
-      deselectElement();
-    }
   });
 }
 
-/** Apply the dashed electric-blue outline to an element inside the iframe */
 function applyOutline(el) {
   if (!el) return;
   el.setAttribute("data-builder-selected", "true");
-  el.style.outline = "2px dashed #2563EB";
+  el.style.outline       = "2px dashed #2563EB";
   el.style.outlineOffset = "4px";
 }
 
-/** Remove outline from the currently selected element */
 function clearOutline() {
   if (!selectedEl) return;
-  selectedEl.style.outline = "";
+  selectedEl.style.outline       = "";
   selectedEl.style.outlineOffset = "";
   selectedEl.removeAttribute("data-builder-selected");
 }
 
-/** Deselect the current element and render the idle sidebar state */
 function deselectElement() {
   clearOutline();
   selectedEl = null;
@@ -1251,46 +1221,33 @@ function deselectElement() {
 }
 
 // ============================================================
-// ELEMENT TYPE CLASSIFICATION
+// ELEMENT CLASSIFICATION
 // ============================================================
-const TEXT_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","SPAN","A","LI","STRONG","EM","LABEL","TD","TH","CAPTION","BLOCKQUOTE"]);
+const TEXT_TAGS = new Set(["H1","H2","H3","H4","H5","H6","P","SPAN","A","LI",
+                            "STRONG","EM","LABEL","TD","TH","BLOCKQUOTE","CAPTION"]);
 
-/**
- * Determine what "kind" an element is for sidebar routing.
- * @param {Element} el
- * @returns {'text'|'gallery-item'|'gallery'|'image'|'container'}
- */
 function classifyElement(el) {
   const tag = el.tagName.toUpperCase();
-
-  // Gallery container
-  if (el.classList.contains("gallery")) return "gallery";
-
-  // Item inside a gallery
-  if (el.closest(".gallery")) return "gallery-item";
-
-  // Standalone image
-  if (tag === "IMG") return "image";
-
-  // Text element
-  if (TEXT_TAGS.has(tag)) return "text";
-
-  // Fallback — structural container
+  if (el.classList.contains("gallery"))       return "gallery";
+  if (el.closest && el.closest(".gallery"))   return "gallery-item";
+  if (tag === "IMG")                          return "image";
+  if (TEXT_TAGS.has(tag))                     return "text";
   return "container";
 }
 
 // ============================================================
-// SIDEBAR RENDERING ENGINE
+// SIDEBAR — IDLE STATE
 // ============================================================
-
-/** Render idle state (nothing selected) */
 function renderIdleState() {
   sidebar.innerHTML = `
     <div class="ctrl-card">
       <div class="ctrl-card-body">
         <div class="idle-state">
           <div class="idle-graphic">
-            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="1.5">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
           </div>
           <div class="idle-title">No Element Selected</div>
           <div class="idle-message">
@@ -1303,199 +1260,184 @@ function renderIdleState() {
     <div class="ctrl-card">
       <div class="ctrl-card-header">
         <div class="card-icon">
-          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
         </div>
         <div class="card-title">Page Info</div>
       </div>
       <div class="ctrl-card-body">
         <div class="ctrl-group">
           <span class="ctrl-label">Database Path</span>
-          <div class="ctrl-input" style="opacity:.7;cursor:default">pages/${PAGE_ID}/htmlCode</div>
+          <div class="ctrl-input" style="opacity:.6;cursor:default;font-size:11px;">pages/${PAGE_ID}/htmlCode</div>
         </div>
         <div class="ctrl-group">
-          <span class="ctrl-label">How to Edit</span>
-          <div class="text-muted" style="line-height:1.7;">
-            • Click <strong style="color:#fff">text</strong> to edit content &amp; typography<br>
-            • Click <strong style="color:#fff">images</strong> to swap via URL or upload<br>
-            • Click <strong style="color:#fff">containers</strong> to change backgrounds<br>
-            • Hit <strong style="color:#2563EB">Save Changes</strong> to push to database
+          <span class="ctrl-label">Quick Guide</span>
+          <div class="text-muted" style="line-height:1.8;">
+            • Click <b style="color:#e2e8f0">text</b> → edit content &amp; typography<br>
+            • Click <b style="color:#e2e8f0">images</b> → swap via URL or upload<br>
+            • Click <b style="color:#e2e8f0">containers</b> → change backgrounds<br>
+            • <b style="color:#2563EB">Ctrl+S</b> or Save button to push to DB
           </div>
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
-/**
- * Render the appropriate control panel for the selected element.
- * @param {Element} el
- */
+// ============================================================
+// SIDEBAR — ELEMENT-SPECIFIC RENDERERS
+// ============================================================
 function renderSidebarForElement(el) {
   const kind = classifyElement(el);
-  const tag  = el.tagName.toUpperCase();
+  const tag  = el.tagName.toLowerCase();
 
-  // Build the selection badge at top
-  const badgeHtml = `
-    <div style="padding:0 0 4px;">
+  const badge = `
+    <div style="padding:0 0 6px;">
       <div class="selection-badge">
         <span class="tag-dot"></span>
-        &lt;${tag.toLowerCase()}&gt;
-        <span style="opacity:.6;font-size:10px;">${kind}</span>
+        &lt;${tag}&gt;&nbsp;<span style="opacity:.55;font-size:10px;">${kind}</span>
       </div>
-    </div>
-  `;
+    </div>`;
 
   switch (kind) {
-    case "text":         sidebar.innerHTML = badgeHtml + buildTextControls(el);     break;
-    case "image":        sidebar.innerHTML = badgeHtml + buildImageControls(el);    break;
-    case "gallery":      sidebar.innerHTML = badgeHtml + buildGalleryControls(el);  break;
-    case "gallery-item": sidebar.innerHTML = badgeHtml + buildGalleryItemControls(el); break;
-    case "container":    sidebar.innerHTML = badgeHtml + buildContainerControls(el); break;
-    default:             renderIdleState();
+    case "text":         sidebar.innerHTML = badge + buildTextControls(el);        break;
+    case "image":        sidebar.innerHTML = badge + buildImageControls(el);       break;
+    case "gallery":      sidebar.innerHTML = badge + buildGalleryControls(el);     break;
+    case "gallery-item": sidebar.innerHTML = badge + buildGalleryItemControls(el); break;
+    case "container":    sidebar.innerHTML = badge + buildContainerControls(el);   break;
+    default:             renderIdleState(); return;
   }
 
-  // Bind all newly rendered controls
   bindControls(el, kind);
 }
 
-// ============================================================
-// CONTROL PANEL BUILDERS — Return HTML strings
-// ============================================================
-
-/** Build text editing controls HTML */
+// ---- TEXT ----
 function buildTextControls(el) {
-  const cs    = el.style;
-  const color = rgbToHex(cs.color) || "#000000";
-  const size  = parseInt(cs.fontSize) || 16;
-  const align = cs.textAlign || "left";
-  const weight= cs.fontWeight === "bold" || parseInt(cs.fontWeight) >= 700 ? "bold" : "normal";
+  const cs     = window.getComputedStyle ? el.ownerDocument.defaultView.getComputedStyle(el) : el.style;
+  const color  = rgbToHex(el.style.color  || cs.color)  || "#000000";
+  const size   = parseInt(el.style.fontSize  || cs.fontSize)  || 16;
+  const align  = el.style.textAlign  || cs.textAlign  || "left";
+  const isBold = (el.style.fontWeight || cs.fontWeight) === "bold" ||
+                 parseInt(el.style.fontWeight || cs.fontWeight) >= 700;
 
   return `
     <div class="ctrl-card">
       <div class="ctrl-card-header">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg></div>
-        <div class="card-title">Text Content</div>
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h7"/></svg></div>
+        <div class="card-title">Content</div>
       </div>
       <div class="ctrl-card-body">
-        <div class="ctrl-group">
-          <span class="ctrl-label">Edit Inline</span>
-          <button class="action-btn" id="ctrl-editable-toggle">
-            <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            Enable Inline Editing
-          </button>
-        </div>
+        <span class="ctrl-label">Click to edit text directly in the preview</span>
+        <button class="action-btn" id="ctrl-editable-toggle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+          Enable Inline Editing
+        </button>
       </div>
     </div>
 
     <div class="ctrl-card">
       <div class="ctrl-card-header">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></div>
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="#2563EB"><circle cx="12" cy="12" r="8"/></svg></div>
         <div class="card-title">Text Color</div>
       </div>
       <div class="ctrl-card-body">
-        <div class="ctrl-group">
-          <div class="color-picker-row">
-            <div class="color-swatch-wrap">
-              <div class="color-swatch-preview" id="color-swatch-preview" style="background:${color};"></div>
-              <input type="color" id="ctrl-color" value="${color}" />
-            </div>
-            <input type="text" class="color-hex-input" id="ctrl-color-hex" value="${color}" maxlength="7" placeholder="#000000" />
+        <div class="color-picker-row">
+          <div class="color-swatch-wrap">
+            <div class="color-swatch-preview" id="color-swatch-preview" style="background:${color}"></div>
+            <input type="color" id="ctrl-color" value="${color}"/>
           </div>
+          <input type="text" class="color-hex-input" id="ctrl-color-hex" value="${color}" maxlength="7" placeholder="#000000"/>
         </div>
       </div>
     </div>
 
     <div class="ctrl-card">
       <div class="ctrl-card-header">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h18"/></svg></div>
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg></div>
         <div class="card-title">Typography</div>
       </div>
       <div class="ctrl-card-body">
         <div class="ctrl-group">
-          <span class="ctrl-label">Font Size — <span id="fs-val">${size}px</span></span>
+          <span class="ctrl-label">Font Size</span>
           <div class="slider-row">
-            <input type="range" class="ctrl-slider" id="ctrl-fontsize" min="12" max="72" value="${size}" />
+            <input type="range" class="ctrl-slider" id="ctrl-fontsize" min="12" max="72" value="${size}"/>
             <span class="slider-value" id="fs-disp">${size}px</span>
           </div>
         </div>
-
         <div class="ctrl-group">
-          <span class="ctrl-label">Text Alignment</span>
+          <span class="ctrl-label">Alignment</span>
           <div class="segment-control">
-            <button class="segment-btn ${align==='left'?'active':''}" data-align="left" id="align-left">
-              <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>
-              Left
+            <button class="segment-btn ${align==='left'?'active':''}" data-align="left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg> Left
             </button>
-            <button class="segment-btn ${align==='center'?'active':''}" data-align="center" id="align-center">
-              <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
-              Center
+            <button class="segment-btn ${align==='center'?'active':''}" data-align="center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg> Center
             </button>
-            <button class="segment-btn ${align==='right'?'active':''}" data-align="right" id="align-right">
-              <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg>
-              Right
+            <button class="segment-btn ${align==='right'?'active':''}" data-align="right">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg> Right
             </button>
           </div>
         </div>
-
         <div class="ctrl-group">
           <span class="ctrl-label">Font Weight</span>
           <div class="toggle-row">
-            <button class="toggle-btn ${weight==='normal'?'active':''}" id="fw-regular">Regular</button>
-            <button class="toggle-btn ${weight==='bold'?'active':''}" id="fw-bold">
-              <strong>Bold</strong>
-            </button>
+            <button class="toggle-btn ${!isBold?'active':''}" id="fw-regular">Regular</button>
+            <button class="toggle-btn ${isBold?'active':''}"  id="fw-bold"><b>Bold</b></button>
           </div>
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
-/** Build standalone image controls HTML */
+// ---- IMAGE ----
 function buildImageControls(el) {
   return `
     <div class="ctrl-card">
       <div class="ctrl-card-header">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
-        <div class="card-title">Image Source</div>
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+        <div class="card-title">Replace Image</div>
       </div>
       <div class="ctrl-card-body">
         <div class="ctrl-group">
-          <span class="ctrl-label">Paste Image URL</span>
+          <span class="ctrl-label">Image URL</span>
           <div class="url-input-row">
-            <input type="text" class="ctrl-input" id="ctrl-img-url" placeholder="https://example.com/image.jpg" />
+            <input type="text" class="ctrl-input" id="ctrl-img-url" placeholder="https://…/photo.jpg"/>
             <button class="paste-btn" id="btn-paste-url" title="Paste from clipboard">
-              <svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
             </button>
           </div>
+          <button class="url-apply-btn" style="margin-top:6px" id="btn-apply-url">Apply URL →</button>
         </div>
-        <button class="url-apply-btn" id="btn-apply-url">Apply URL →</button>
-
         <div class="ctrl-divider"></div>
-
         <div class="ctrl-group">
-          <span class="ctrl-label">Upload Local Image</span>
+          <span class="ctrl-label">Upload &amp; Compress</span>
           <div class="file-upload-zone">
-            <input type="file" accept="image/*" id="ctrl-img-upload" />
+            <input type="file" accept="image/*" id="ctrl-img-upload"/>
             <div class="upload-icon">🖼</div>
-            <div class="upload-text">
-              <strong>Click to browse</strong> or drag &amp; drop<br>
-              Auto-compressed to ≤1200px, JPEG 70%
-            </div>
+            <div class="upload-text"><strong>Click to browse</strong><br>Auto-compressed ≤1200px JPEG 70%</div>
           </div>
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
-/** Build gallery container controls HTML */
+// ---- GALLERY CONTAINER ----
 function buildGalleryControls(el) {
   return `
     <div class="ctrl-card">
       <div class="ctrl-card-header">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></div>
-      </script>
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></div>
+        <div class="card-title">Gallery</div>
+      </div>
+      <div class="ctrl-card-body">
+        <button class="action-btn" id="btn-add-gallery-img">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add Image to Gallery
+        <</script>
 
 </body>
 </html>
